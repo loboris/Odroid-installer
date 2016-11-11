@@ -195,6 +195,9 @@ exit_script() {
 			_delay=60
 			if [ "${B}" = "E" ] || [ "${B}" = "e" ]; then
 				break
+			elif [ "${B}" = "s" ]; then
+				# SCREENSHOT ===
+				fbcat > /install_exit.ppm
 			fi
 		else
 			let _delay=_delay-1
@@ -2101,6 +2104,9 @@ while [ $_inst_delay -gt 0 ]; do
 				print_header
 				print_settings
 			fi
+		elif [ "${A}" = "s" ]; then
+			# SCREENSHOT ===
+			fbcat > /install.ppm
 		fi
     else
 		[ $INST_DELAY -lt 60 ] && let _inst_delay=_inst_delay-1

@@ -317,6 +317,9 @@ exit_script() {
 			_delay=30
 			if [ "${B}" = "E" ] || [ "${B}" = "e" ]; then
 				break
+			elif [ "${B}" = "s" ]; then
+				# SCREENSHOT ===
+				fbcat > /backup_exit.ppm
 			fi
 		else
 			let _delay=_delay-1
@@ -504,6 +507,9 @@ while [ $_delay -gt 0 ]; do
 		elif [ "${B}" = "E" ] || [ "${B}" = "e" ]; then
 			_delay=0
 			break
+		elif [ "${B}" = "s" ]; then
+			# SCREENSHOT ===
+			fbcat > /backup.ppm
 		fi
 	else
 		let _delay=_delay-1

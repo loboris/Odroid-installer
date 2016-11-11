@@ -907,10 +907,14 @@ while true; do
 				fi
 			done
 			if [ $_reboot_delay -eq 0 ]; then
+				cp -f /*.ppm /mnt1 > /dev/null 2>&1
 				umount /mnt1 > /dev/null 2>&1
 				umount /mnt2 > /dev/null 2>&1
 				reboot
 			fi
+		elif [ "${A}" = "s" ]; then
+			# SCREENSHOT ===
+			fbcat > /mb_menu.ppm
 		elif [ ! "${BOOT_FROM}" = "none" ]; then
 			# === BOOT to selected OS
 			boot_fail="no"

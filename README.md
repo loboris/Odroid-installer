@@ -1,12 +1,14 @@
-Boot menu and tools for Odroid XU3/XU4 & C2
+MultiBoot menu and tools for Odroid XU3/XU4 & C2
 ===========================================
 
 About
 -----
 
-Boot menu for selecting available OS to boot to\
-Backup tool for backup operating system(s) from multiboot card or original Odroid card\
-Universal installer which can install **android**, **linux**, **OpenELEC** or any combinations (**multiboot**) from USB drive.\
+Boot menu for selecting from available OS's<br />
+Backup tool for backup operating system(s) from multiboot card or original Odroid card<br />
+Universal installer which can install **android**, **linux**, **OpenELEC** or any combinations (**multiboot**) from USB drive.<br />
+
+---
 
 **Multiboot features**
 
@@ -31,16 +33,16 @@ Universal installer which can install **android**, **linux**, **OpenELEC** or an
 
 **Backup features**
 
-- backup **multiboot** SDCard or EMMC to USB drive
-- backup **original Odroid** SDCard or EMMC to USB drive
+- backup **multiboot** SDCard or EMMC (all installed operating systems) to USB drive
+- backup **original Odroid** SDCard or EMMC (Android or Linux) to USB drive
 - backup on USB drive can be used as source for **Installer**
 
 **Installer usage**
 
-- use **prepared multiboo installer images**, in **multiboot_install.zip**, unzip to some empty directora
-- run `sudo dd if=multiboot_install_[c2|xu4] of=/dev/sdX bs=1MB oflag=direct`
+- use **prepared multiboot installer images**, in **multiboot_install_images.zip**, unzip to some empty directory
+- run `sudo dd if=multiboot_install_[c2|xu4].img of=/dev/sdX bs=1MB oflag=direct`
 - **or**
-- build the installer sdcard/image running `sudo ./prepare_selfinst <destination_card>|<destination_image_name> [board]`
+- build the installer sdcard/image running `sudo ./prepare_selfinst <destination_card>|<destination_image_name> c2|xu4`
 - if the image file is created, you can write the image to SDCard using dd command.
   - copy your installation sources (Android update image **update.zip**, Linux **.img**, OpenELEC **.tar** file) to the first partition of your USB drive
   - **rename** the Linux installation image to **linux.img** !
