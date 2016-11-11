@@ -1,0 +1,342 @@
+#!/bin/bash
+
+if [ "$(id -u)" != "0" ]; then
+   printf "\n\033[31m\033[1mScript must be run as root !\033[22m\033[37m\n\n"
+   exit 1
+fi
+
+usage() {
+	printf "\n\033[33m"
+    printf "USAGE: prepare_selfinst dest board [big]\n"
+    printf "       \033[1mdest\033[22m   destination, block device (/dev/sdX) or image name\n"
+    printf "       \033[1mboard\033[22m  Odroid board type: \033[1mc2\033[22m or \033[1mxu4\033[22m\n"
+	printf "\033[37m\n"
+}
+
+needed_packages=""
+
+_testpkg=$(dpkg -l | grep parted)
+if [ "${_testpkg}" = "" ]; then
+    needed_packages="${needed_packages}parted "
+fi
+_testpkg=$(dpkg -l | grep dosfstools)
+if [ "${_testpkg}" = "" ]; then
+    needed_packages="${needed_packages}dosfstools "
+fi
+
+if [ ! "${needed_packages}" = "" ]; then
+    printf "\n\033[31m\033[1mYou have to install \033[22m\033[37m%s !\033[37m\n\n" "${needed_packages}"
+    exit 1
+fi
+
+
+if [ "${1}" = "" ]; then
+    printf "\n\033[31m\033[1mdestination must be specified\033[22m\033[37m\n"
+    usage
+    exit 1
+fi
+if [ ! "${2}" = "xu4" ] && [ ! "${2}" = "c2" ]; then
+    printf "\n\033[31m\033[1mOdroid board type must be \033[33mxu4\033[31m or \033[33mc2\033[31m\033[37m\n"
+    usage
+    exit 1
+fi
+
+if [ "${2}" = "c2" ]; then
+	part_start=65536       # RESERVE 32MB AT CARD START
+	o_device="c2"
+	src_dir="C2"
+else
+	part_start=131072      # RESERVE 64MB AT CARD START
+	o_device="xu4"
+	src_dir="XU4"
+	if [ -b $sdcard ]; then
+		printf "\n\033[33m\033[1mWARNING:\033[22m Do not use EMMC in SD adapter to prepare the card!\033[37m\n"
+	fi
+fi
+
+
+_image_size=250
+
+sdcard=${1}
+
+#====================
+image_error_exit() {
+    echo ""
+    umount _mnt > /dev/null 2>&1
+    rmdir _mnt > /dev/null 2>&1
+    rm -rf tmp/* > /dev/null 2>&1
+    rmdir tmp > /dev/null 2>&1
+    printf "\033[31m\033[1m%s\033[37m\033[22m\n" "${1}"
+    exit 1
+}
+
+
+#====================================================================================
+
+echo ""
+printf "\033[36m\033[1m\n"
+echo "========================================================"
+echo "= Preparing Odroid MultiBoot selfinstall sd card/image ="
+echo "========================================================"
+printf "\033[22m\033[37m\n"
+printf "\033[33mPreparing for \033[1mOdroid-%s\033[22m\033[37m\n\n" "${o_device}"
+
+# =================
+# Check destination
+# =================
+if [ -b $sdcard ]; then
+    # we are working with block device
+    # Test if requested drive is removable
+    ISREMOVABLE=`udevadm info -a -n ${sdcard} | grep -o "ATTR{removable}==\"1\""`
+    if [ ! "${ISREMOVABLE}" = "ATTR{removable}==\"1\"" ] ; then
+	    printf "\033[31m\033[1m%s IS NOT REMOVABLE DRIVE !, Exiting.\033[37m\033[22m\n" "${sdcard}"
+	    exit 1
+    fi
+
+    _sdok=`fdisk -l $sdcard  2> /dev/null | grep Disk`
+    if [ "$_sdok" = "" ]; then
+	    printf "\033[31m\033[1m%s NOT FOUND !, Exiting.\033[37m\033[22m\n" "${sdcard}"
+	    exit 1
+    fi
+	_image_size=2048
+    _isimage="no"
+else
+	_tstname=`echo ${sdcard} | grep "/dev"`
+	if [ ! "${_tstname}" = "" ]; then
+		printf "\n\033[31m\033[1mWrong image name!\033[22m\033[37m\n\n"
+		exit 1
+	fi
+    _isimage="yes"
+fi
+
+
+# =================================
+# Create partition images if needed
+
+if [ "${_isimage}" = "yes" ]; then
+    echo "Creating image file...."
+    dd if=/dev/zero of=${sdcard}1 bs=1M count=${_image_size} > /dev/null 2>&1
+    dd if=/dev/zero of=${sdcard}0 bs=512 count=${part_start} > /dev/null 2>&1
+    mkfs -t vfat -n SELFINST ${sdcard}1 > /dev/null 2>&1
+    if [ $? -ne 0 ]; then
+		image_error_exit "  ERROR formating vfat partition."
+    fi
+fi
+
+umount ${sdcard}* > /dev/null 2>&1
+sleep 1
+
+# ==========================================================
+# Partition and format sd/emmc card if not creating an image
+
+if [ ! "${_isimage}" = "yes" ]; then
+    printf "\033[31m\033[1mWARNING: SD card \033[36m%s\033[31m WILL BE ERASED !\033[22m\033[37m, Continue (y/N)?  " "${sdcard}"
+    read -n 1 ANSWER
+
+    if [ ! "${ANSWER}" = "y" ] ; then
+	echo "."
+		image_error_exit "Canceled.."
+    fi
+
+    echo ""
+    echo "Erasing ${sdcard} ..."
+    dd if=/dev/zero of=${sdcard} bs=1M count=10 oflag=direct > /dev/null 2>&1
+    sync
+    sleep 1
+    partprobe -s ${sdcard} > /dev/null 2>&1
+    if [ $? -ne 0 ]; then
+		image_error_exit "ERROR."
+	exit 1
+    fi
+    sleep 1
+
+    echo "Creating new filesystem on $sdcard ..."
+    echo -e "o\nw" | fdisk ${sdcard} > /dev/null 2>&1
+    sync
+    echo "  New filesystem created on SD card."
+    sleep 1
+    partprobe -s ${sdcard} > /dev/null 2>&1
+    if [ $? -ne 0 ]; then
+		image_error_exit "ERROR."
+	exit 1
+    fi
+    sleep 1
+
+    echo ""
+    echo "Creating installer partition on $sdcard..."
+	echo -e "n\np\n1\n$part_start\n\nt\nc\nw" | fdisk ${sdcard} > /dev/null 2>&1
+    sleep 1
+    partprobe -s ${sdcard} > /dev/null 2>&1
+    if [ $? -ne 0 ]; then
+		image_error_exit "ERROR."
+	exit 1
+    fi
+    sleep 1
+
+    echo ""
+    echo "Formating partition ..."
+    dd if=/dev/zero of=${sdcard}1 bs=1M count=1 oflag=direct > /dev/null 2>&1
+    sync
+    mkfs -t vfat -F 32 -n SELFINST ${sdcard}1 > /dev/null 2>&1
+    if [ $? -ne 0 ]; then
+		image_error_exit "  ERROR formating installer partition."
+    fi
+    echo "  selfinst partition formated."
+    sync
+
+    echo ""
+    echo "Copying boot section..."
+	if [ ${o_device} = "xu4" ]; then
+		dd if=${src_dir}/initramfs/ramfs/multi/bl1.bin of=${sdcard} bs=512 seek=1 > /dev/null 2>&1
+		if [ $? -ne 0 ]; then
+			echo "ERROR installing bl1.bin."
+		fi
+        sync
+        dd if=${src_dir}/initramfs/ramfs/multi/bl2.bin of=${sdcard} bs=512 seek=31 > /dev/null 2>&1
+        if [ $? -ne 0 ]; then
+            echo "ERROR installing bl2.bin."
+        fi
+        sync
+        dd if=${src_dir}/initramfs/ramfs/multi/u-boot.bin of=${sdcard} bs=512 seek=63 > /dev/null 2>&1
+        if [ $? -ne 0 ]; then
+            echo "ERROR installing u-boot.bin."
+        fi
+        sync
+        dd if=${src_dir}/initramfs/ramfs/multi/tzsw.bin of=${sdcard} bs=512 seek=2111 > /dev/null 2>&1
+        if [ $? -ne 0 ]; then
+            echo "ERROR installing tzsw.bin."
+        fi
+        sync
+	else
+		dd if=${src_dir}/initramfs/ramfs/multi/bl1.bin of=${sdcard} bs=1 count=442 > /dev/null 2>&1
+		if [ $? -ne 0 ]; then
+			echo "ERROR installing bl1.bin."
+		fi
+		dd if=${src_dir}/initramfs/ramfs/multi/bl1.bin of=${sdcard} bs=512 skip=1 seek=1 > /dev/null 2>&1
+		if [ $? -ne 0 ]; then
+			echo "ERROR installing bl1.bin."
+		fi
+		sync
+		dd if=${src_dir}/initramfs/ramfs/multi/u-boot.bin of=${sdcard} bs=512 seek=97 > /dev/null 2>&1
+		if [ $? -ne 0 ]; then
+			echo "ERROR installing u-boot.bin."
+		fi
+		sync
+		# u-boot env erase
+		dd if=/dev/zero of=${sdcard} seek=1440 count=64 > /dev/null 2>&1
+		if [ $? -ne 0 ]; then
+			echo "ERROR erasing u-boot environment."
+		fi
+	fi
+fi
+
+sync
+
+mkdir _mnt > /dev/null 2>&1
+
+echo ""
+mount ${sdcard}1 _mnt > /dev/null 2>&1
+if [ $? -ne 0 ]; then
+    image_error_exit "ERROR mounting destination partition ${sdcard}1."
+    exit 1
+fi
+
+echo "Copying installation files..."
+mkdir _mnt/multiboot > /dev/null 2>&1
+
+cp ${src_dir}/multiboot/*.multi _mnt/multiboot > /dev/null 2>&1
+if [ $? -ne 0 ]; then
+    image_error_exit "ERROR installing multiboot files on ${sdcard}1."
+    exit 1
+fi
+if [ ${o_device} = "xu4" ]; then
+	cp ${src_dir}/multiboot/boot.scr.multi _mnt/boot.scr > /dev/null 2>&1
+else
+	cp ${src_dir}/multiboot/boot.ini.multi _mnt/boot.ini > /dev/null 2>&1
+fi
+if [ $? -ne 0 ]; then
+    image_error_exit "ERROR installing multiboot ini file on ${sdcard}1."
+    exit 1
+fi
+
+umount _mnt > /dev/null 2>&1
+if [ $? -ne 0 ]; then
+    echo "umount ${sdcard}1, ERROR"
+else
+    rmdir _mnt
+fi
+
+if [ "${_isimage}" = "yes" ]; then
+    echo "Creating final image..."
+    dd if=${sdcard}0 of=${sdcard} > /dev/null 2>&1
+    dd if=${sdcard}1 of=${sdcard} conv=notrunc oflag=append > /dev/null 2>&1
+    rm ${sdcard}0 > /dev/null 2>&1
+    rm ${sdcard}1 > /dev/null 2>&1
+
+    echo -e "o\nw" | fdisk ${sdcard} > /dev/null 2>&1
+    echo -e "n\np\n1\n$part_start\n\nt\nc\nw" | fdisk ${sdcard} > /dev/null 2>&1
+
+	if [ ${o_device} = "xu4" ]; then
+		dd if=${src_dir}/initramfs/ramfs/multi/bl1.bin of=${sdcard} conv=notrunc bs=512 seek=1 > /dev/null 2>&1
+		if [ $? -ne 0 ]; then
+			echo "ERROR installing bl1.bin."
+		fi
+        sync
+        dd if=${src_dir}/initramfs/ramfs/multi/bl2.bin of=${sdcard} conv=notrunc seek=31 > /dev/null 2>&1
+        if [ $? -ne 0 ]; then
+            echo "ERROR installing bl2.bin."
+        fi
+        sync
+        dd if=${src_dir}/initramfs/ramfs/multi/u-boot.bin of=${sdcard} conv=notrunc seek=63 > /dev/null 2>&1
+        if [ $? -ne 0 ]; then
+            echo "ERROR installing u-boot.bin."
+        fi
+        sync
+        dd if=${src_dir}/initramfs/ramfs/multi/tzsw.bin of=${sdcard} conv=notrunc seek=2111 > /dev/null 2>&1
+        if [ $? -ne 0 ]; then
+            echo "ERROR installing tzsw.bin."
+        fi
+        sync
+	else
+		dd if=${src_dir}/initramfs/ramfs/multi/bl1.bin of=${sdcard} conv=notrunc bs=1 count=442 > /dev/null 2>&1
+		if [ $? -ne 0 ]; then
+			echo "ERROR installing bl1.bin."
+		fi
+		dd if=${src_dir}/initramfs/ramfs/multi/bl1.bin of=${sdcard} conv=notrunc bs=512 skip=1 seek=1 > /dev/null 2>&1
+		if [ $? -ne 0 ]; then
+			echo "ERROR installing bl1.bin."
+		fi
+		sync
+		dd if=${src_dir}/initramfs/ramfs/multi/u-boot.bin of=${sdcard} conv=notrunc bs=512 seek=97 > /dev/null 2>&1
+		if [ $? -ne 0 ]; then
+			echo "ERROR installing u-boot.bin."
+		fi
+		sync
+		# u-boot env erase
+		dd if=/dev/zero of=${sdcard} conv=notrunc seek=1440 count=64 > /dev/null 2>&1
+		if [ $? -ne 0 ]; then
+			echo "ERROR erasing u-boot environment."
+		fi
+	fi
+    sleep 1
+fi
+
+
+rm -rf tmp/* > /dev/null 2>&1
+rmdir tmp > /dev/null 2>&1
+
+echo ""
+echo "OK."
+printf "\033[36m\033[1m\n"
+if [ "${_isimage}" = "yes" ]; then
+	echo "======================================================="
+	echo "= Odroid MultiBoot selfinstall sd card image prepared ="
+	echo "======================================================="
+else
+	echo "================================================="
+	echo "= Odroid MultiBoot selfinstall sd card prepared ="
+	echo "================================================="
+fi
+printf "\033[22m\033[37m\n"
+
+exit 0

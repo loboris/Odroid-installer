@@ -1,0 +1,111 @@
+ODROIDC2-UBOOT-CONFIG
+
+setenv dtbaddr 0x1000000
+setenv loadaddr 0x20000000
+
+# Resolution Configuration
+# 'hdmimode' must be one of below to configure display resolution within
+# supported by your TV or monitor.
+#    Symbol             | Resolution
+# ----------------------+-------------
+#    "480p60hz"         | 720x480 Progressive 60Hz
+#    "576p50hz"         | 720x576 Progressive 50Hz
+#    "720p60hz"         | 1280x720 Progressive 60Hz
+#    "720p50hz"         | 1280x720 Progressive 50Hz
+#    "1080p60hz"        | 1920x1080 Progressive 60Hz
+#    "1080p50hz"        | 1920x1080 Progressive 50Hz
+#    "1080p30hz"        | 1920x1080 Progressive 30Hz
+#    "1080p24hz"        | 1920x1080 Progressive 24Hz
+#    "1080i60hz"        | 1920x1080 Interlaced 60Hz
+#    "1080i50hz"        | 1920x1080 Interlaced 50Hz
+#    "2160p60hz"        | 3840x2160 Progressive 60Hz
+#    "2160p50hz"        | 3840x2160 Progressive 50Hz
+#    "2160p30hz"        | 3840x2160 Progressive 30Hz
+#    "2160p25hz"        | 3840x2160 Progressive 25Hz
+#    "2160p24hz"        | 3840x2160 Progressive 24Hz
+#    "2160p60hz420"     | 3840x2160 Progressive 60Hz YCbCr 4:2:0
+#    "2160p50hz420"     | 3840x2160 Progressive 50Hz YCbCr 4:2:0
+#    "640x480p60hz"     | 640x480 Progressive 60Hz
+#    "800x480p60hz"     | 800x480 Progressive 60Hz
+#    "800x600p60hz"     | 800x600 Progressive 60Hz
+#    "1024x600p60hz"    | 1024x600 Progressive 60Hz
+#    "1024x768p60hz"    | 1024x768 Progressive 60Hz
+#    "1280x800p60hz"    | 1280x800 Progressive 60Hz
+#    "1280x1024p60hz"   | 1280x1024 Progressive 60Hz
+#    "1360x768p60hz"    | 1360x768 Progressive 60Hz
+#    "1440x900p60hz"    | 1440x900 Progressive 60Hz
+#    "1600x900p60hz"    | 1600x900 Progressive 60Hz
+#    "1600x1200p60hz"   | 1600x1200 Progressive 60Hz
+#    "1680x1050p60hz"   | 1680x1050 Progressive 60Hz
+#    "1920x1200p60hz"   | 1920x1200 Progressive 60Hz
+#    "2560x1080p60hz"   | 2560x1080 Progressive 60Hz
+#    "2560x1440p60hz"   | 2560x1440 Progressive 60Hz
+#    "2560x1600p60hz"   | 2560x1600 Progressive 60Hz
+#    "3440x1440p60hz"   | 3440x1440 Progressive 60Hz
+setenv hdmimode "1080p60hz"
+
+setenv rootopt "root=/dev/mmcblk0p2 rw init=/init rootwait"
+setenv consoleopt "console=ttyS0,115200"
+setenv androidopt "androidboot.hardware=odroidc2 androidboot.serialno=${fbt_id#}"
+setenv logoopt "osd1,loaded,${fb_addr},${hdmimode}"
+setenv selinuxopt "androidboot.selinux=disabled"
+
+# HDMI/DVI Mode Configuration
+# This will enforce the signal type of display
+# "hdmi" - For HDMI interface
+# "dvi" - For DVI interface
+setenv vout_mode "hdmi"
+
+# HPD enable/disable option
+setenv disablehpd "false"
+
+# Overscan offset configuration
+# All offsets are zero and can be tuned by manual or ODROID Utility
+setenv overscan_top "0"
+setenv overscan_left "0"
+setenv overscan_bottom "0"
+setenv overscan_right "0"
+suspend_hdmiphy=0
+led_blink=1
+
+# max cpu frequency in dvfs table / in MHz unit
+# setenv max_freq "2016"  # 2.016GHz
+# setenv max_freq "1944"  # 1.944GHz
+# setenv max_freq "1944"  # 1.944GHz
+# setenv max_freq "1920"  # 1.920GHz
+# setenv max_freq "1896"  # 1.896GHz
+# setenv max_freq "1752"  # 1.752GHz
+# setenv max_freq "1680"  # 1.680GHz
+# setenv max_freq "1656"  # 1.656GHz
+setenv max_freq "1536"  # 1.536GHz
+
+# max cpu-cores
+# setenv maxcpus "1"
+# setenv maxcpus "2"
+# setenv maxcpus "3"
+setenv maxcpus "4"
+
+setenv bootargs "${rootopt} ${consoleopt} hdmimode=${hdmimode} hdmitx=${cecconfig} vout=${vout_mode} disablehpd=${disablehpd} logo=${logoopt} ${androidopt} ${selinuxopt} suspend_hdmiphy=${suspend_hdmiphy} led_blink=${led_blink} max_freq=${max_freq} maxcpus=${maxcpus}"
+
+save
+
+showlogo ${hdmimode}
+#usb pwren
+
+# =================================================
+# = RESTORE boot.ini FOR MULTIBOOT, DO NOT CHANGE =
+# =================================================
+fatload mmc 0:1 0x60000000 multiboot/boot.ini.multi
+fatwrite mmc 0:1 0x60000000 boot.ini ${filesize}
+# =================================================
+
+#movi read dtb 0 ${dtbaddr}
+#movi read boot 0 ${loadaddr}
+#booti ${loadaddr} - ${dtbaddr}
+
+setenv kernel  "fatload mmc 0:1 0x11000000 multiboot/Image.android"
+setenv dtb     "fatload mmc 0:1 0x1000000  multiboot/meson64_odroidc2.dtb.android"
+setenv bootseq "booti 0x11000000 - 0x1000000"
+setenv bootcmd "${kernel}; ${dtb}; ${bootseq}"
+
+run bootcmd

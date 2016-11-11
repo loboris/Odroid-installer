@@ -1,0 +1,4 @@
+/scripts/panic/keymap "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf
+/scripts/panic/console_setup "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf

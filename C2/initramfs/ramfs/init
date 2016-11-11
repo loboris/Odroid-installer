@@ -1,0 +1,956 @@
+#!/bin/bash
+
+# ============================================================
+# This is the standard Ubuntu initramfs initialization process
+# ============================================================
+
+# Default PATH differs between shells, and is not automatically exported
+# by klibc dash.  Make it consistent.
+export PATH=/sbin:/usr/sbin:/bin:/usr/bin
+
+[ -d /dev ] || mkdir -m 0755 /dev
+[ -d /root ] || mkdir -m 0700 /root
+[ -d /sys ] || mkdir /sys
+[ -d /proc ] || mkdir /proc
+[ -d /tmp ] || mkdir /tmp
+mkdir -p /var/lock
+mount -t sysfs -o nodev,noexec,nosuid sysfs /sys
+mount -t proc -o nodev,noexec,nosuid proc /proc
+# Some things don't work properly without /etc/mtab.
+ln -sf /proc/mounts /etc/mtab
+
+echo "1 1 1 1" > /proc/sys/kernel/printk
+grep -q '\<quiet\>' /proc/cmdline || echo "Loading, please wait..."
+
+# Note that this only becomes /dev on the real filesystem if udev's scripts
+# are used; which they will be, but it's worth pointing out
+if ! mount -t devtmpfs -o nosuid,mode=0755 udev /dev; then
+	echo "W: devtmpfs not available, falling back to tmpfs for /dev"
+	mount -t tmpfs -o nosuid,mode=0755 udev /dev
+	[ -e /dev/console ] || mknod -m 0600 /dev/console c 5 1
+	[ -e /dev/null ] || mknod /dev/null c 1 3
+fi
+mkdir /dev/pts
+mount -t devpts -o noexec,nosuid,gid=5,mode=0620 devpts /dev/pts || true
+mount -t tmpfs -o "noexec,nosuid,size=80%,mode=0755" tmpfs /run
+mkdir -m 0755 /run/initramfs
+
+# Export the dpkg architecture
+export DPKG_ARCH=
+. /conf/arch.conf
+
+# Set modprobe env
+export MODPROBE_OPTIONS="-qb"
+
+# Export relevant variables
+export ROOT=
+export ROOTDELAY=
+export ROOTFLAGS=
+export ROOTFSTYPE=
+export IP=
+export BOOT=
+export BOOTIF=
+export UBIMTD=
+export break=
+export init=/sbin/init
+export quiet=y
+export readonly=y
+export rootmnt=/root
+export debug=
+export panic=
+export blacklist=
+export resume=
+export resume_offset=
+export drop_caps=
+export fastboot=n
+export forcefsck=n
+export fsckfix=
+export recovery=
+
+
+# mdadm needs hostname to be set. This has to be done before the udev rules are called!
+if [ -f "/etc/hostname" ]; then
+        /bin/hostname -F /etc/hostname >/dev/null 2>&1
+fi
+
+# Bring in the main config
+. /conf/initramfs.conf
+for conf in conf/conf.d/*; do
+	[ -f ${conf} ] && . ${conf}
+done
+. /scripts/functions
+echo "1 1 1 1" > /proc/sys/kernel/printk
+
+
+BOOTDELAY=60
+DEFAULTBOOT="1"
+
+# Parse command line options
+for x in $(cat /proc/cmdline); do
+    case $x in
+	boot_delay=*)
+		BOOTDELAY="${x#boot_delay=}"
+		case ${BOOTDELAY} in
+		*[![:digit:].]*)
+			BOOTDELAY=60
+			;;
+		esac
+		;;
+	default_boot=*)
+		DEFAULTBOOT="${x#default_boot=}"
+		;;
+    quiet)
+        quiet=y
+        ;;
+    ro)
+        readonly=y
+        ;;
+    rw)
+        readonly=n
+        ;;
+    break=*)
+        break=${x#break=}
+        ;;
+    break)
+        break=premount
+        ;;
+    esac
+done
+
+# Default to BOOT=local if no boot script defined.
+if [ -z "${BOOT}" ]; then
+	BOOT=local
+fi
+
+if [ -n "${noresume}" ]; then
+	export noresume
+	unset resume
+else
+	resume=${RESUME:-}
+fi
+
+maybe_break top
+
+# export BOOT variable value for compcache,
+# so we know if we run from casper
+export BOOT
+
+# Don't do log messages here to avoid confusing graphical boots
+run_scripts /scripts/init-top
+
+#maybe_break modules
+#[ -n "${netconsole}" ] && modprobe netconsole netconsole="${netconsole}"
+load_modules
+
+maybe_break premount
+run_scripts /scripts/init-premount
+
+maybe_break mount
+# Always load local and nfs (since these might be needed for /etc or
+# /usr, irrespective of the boot script used to mount the rootfs).
+. /scripts/local
+. /scripts/nfs
+. /scripts/${BOOT}
+parse_numeric ${ROOT}
+maybe_break mountroot
+mount_top
+mount_premount
+#mountroot
+
+if read_fstab_entry /usr; then
+	mountfs /usr
+fi
+
+# Mount cleanup
+mount_bottom
+nfs_bottom
+local_bottom
+
+#maybe_break bottom
+# We expect udev's init-bottom script to move /dev to ${rootmnt}/dev
+#run_scripts /scripts/init-bottom
+
+# Move /run to the root
+#mount -n -o move /run ${rootmnt}/run
+
+#validate_init() {
+#	run-init -n "${rootmnt}" "${1}"
+#}
+
+
+chown 0:0 /bin/*
+chown 0:0 /sbin/*
+echo "1 1 1 1" > /proc/sys/kernel/printk
+sleep 1
+
+# ============================
+# === BOOT & TOOLS SELECT  ===
+# ============================
+
+# ========================================================================================
+# During the u-boot (boot.ini):
+# ========================================================================================
+# C2: boots from SDcard if inserted and it is mmc0
+# XU: the BOOT SWITCH SELECTED DRIVE IS ALWAYS mmc0 !!
+# ========================================================================================
+
+# ========================================================================================
+# In initramfs:
+# ========================================================================================
+# When the system has SINGLE CARD inserted, it is always on /dev/mmcblk0
+# ========================================================================================
+# When two cards are inserted (EMMC & SD):
+# ----------------------------------------------------------------------------------------
+# C2: the system ALWAYS BOOTS FROM SDCARD and it is /dev/mmcblk0, EMMC is /dev/mmcblk1
+# ----------------------------------------------------------------------------------------
+# XU: the system boots from EMMC or SDcard depending on BOOT SWITCH, BUT:
+#     EMMC is /dev/mmcblk0 and SDCard is /dev/mmc1 REGARDLESSS OF THE BOOT SWITCH
+# ========================================================================================
+
+# ========================================================================================
+# Mounts:
+# ========================================================================================
+# Single card: on /mnt1
+# ----------------------------------------------------------------------------------------
+# Dual card:
+#   C2: SDCard on /mnt1, EMMC on /mnt2
+#   XU: BOOT CARD on /mnt1, other card on /mnt2
+# ========================================================================================
+
+
+# === Variables ===
+
+[ ! $BOOTDELAY -gt 4 ] &&  BOOTDELAY=5
+export SCRIPT_VERSION="v2.1"
+export O_BOARD="OD"
+export ODROID_DTB="odroid.dtb"
+export ODROID_FSTAB="fstab.odroid"
+export ODROID_IMAGE="Kernel"
+export ODROID_ASYSTEMIMAGE="androsystem.img"
+export BKP_PREFIX="OD"
+export BOOT_FROM="/dev/mmcblk0"
+export BOOT_CARDTYPE="SD"
+
+_desc=""
+_ini_prefix="multiboot"
+_actmount="mnt1"
+_numos=0
+_menu_no=49
+_menu_key="1"
+_menuitem_1=""
+_menuitem_2=""
+_menuitem_3=""
+_menuitem_4=""
+_menuitem_5=""
+_menuitem_6=""
+_menuitem_7=""
+_menuitem_8=""
+_mndscr_1=""
+_mndscr_2=""
+_mndscr_3=""
+_mndscr_4=""
+_mndscr_5=""
+_mndscr_6=""
+_mndscr_7=""
+_mndscr_8=""
+_mncrd_1="1"
+_mncrd_2="1"
+_mncrd_3="1"
+_mncrd_4="1"
+_mncrd_5="1"
+_mncrd_6="1"
+_mncrd_7="1"
+_mncrd_8="1"
+_boot_delay=2
+_numcards="1"
+_defboot="none"
+_defdescr="none"
+_defcard="1"
+boot_fail="yes"
+
+# === Set come variables depending on used Odroid board ===
+if [ -f /ODROID_C2 ]; then
+	O_BOARD="C2"
+	ODROID_DTB="meson64_odroidc2.dtb"
+	ODROID_FSTAB="fstab.odroidc2"
+	ODROID_IMAGE="Image"
+	ODROID_ASYSTEMIMAGE="rootsystem.img"
+	BKP_PREFIX="C2"
+elif [ -f /ODROID_XU ]; then
+	O_BOARD="XU"
+	ODROID_DTB="exynos5422-odroidxu3.dtb"
+	ODROID_FSTAB="fstab.odroidxu3"
+	ODROID_IMAGE="zImage"
+	ODROID_ASYSTEMIMAGE="system.img"
+	BKP_PREFIX="XU"
+fi
+
+
+# === Functions ===
+
+# Get OS description from boot.ini
+#-----------------------------------------------------
+get_descr() {
+	_desc=""
+	local _descx=
+	_descx=`cat /${_actmount}/${_ini_prefix}/$1 | grep \#DESCRIPTION`
+    if [ ! "${_descx}" = "" ]; then
+		_desc=$(echo ${_descx} | sed -r 's/^.{13}//')
+    fi
+	if [ "${_desc}" = "" ]; then
+		_desc="${2}"
+	fi
+}
+#-----------------------------------------------------
+
+
+#----------------------------------------------------------------------------------------------------------------------
+# =======================================================================
+# On C2 boot drive is always mmcblk0 and is mounted on /mnt1
+# On XU3/XU4 boot drive can be mmcblk0 or mmcblk1 and is mounted on /mnt1
+# =======================================================================
+do_boot() {
+	[ "${1}" = "none" ] && return 0
+
+	local change_drive="no"
+	local _oncard=""
+
+	_actmount="mnt1"
+	if [ "${3}" = "2" ]; then
+		_actmount="mnt2"
+		change_drive="yes"
+	fi
+
+	if [ "${_numcards}" = "2" ]; then
+		if [ "${O_BOARD}" = "C2" ]; then
+			if [ "${_actmount}" = "mnt1" ]; then
+				_oncard=" on EMMC"
+			else
+				_oncard=" on SDcard"
+			fi
+		else
+			if [ "${_actmount}" = "mnt1" ] && [ "${BOOT_FROM}" = "/dev/mmcblk1" ]; then
+				_oncard=" on SDcard"
+			else
+				_oncard=" on EMMC"
+			fi
+		fi
+	fi
+
+	if [ -f /${_actmount}/${_ini_prefix}/${1} ]; then
+		boot_fail="yes"
+		printf "\r\033[2K"
+		printf "    Booting to \033[32m%s\033[37m\033[36m%s\033[37m" "${2}" "${_oncard}"
+
+		# === Copy selected boot.ini fo BOOT partition
+		cp /${_actmount}/${_ini_prefix}/${1} /mnt1/boot.ini > /dev/null 2>&1
+		if [ ! $? -eq 0 ]; then
+			cp /mnt1/${_ini_prefix}/boot.ini.multi /mnt1/boot.ini > /dev/null 2>&1
+			[ "${O_BOARD}" = "XU" ] && cp /mnt1/${_ini_prefix}/boot.scr.multi /mnt1/boot.scr > /dev/null 2>&1
+			printf "\033[31m\033[1m ERROR copying /%s/%s/%s\033[22m\033[37m" "${_actmount}" "${_ini_prefix}" "${1}"
+			sleep 3
+			return 1
+		fi
+		sleep 1
+
+		if [ "${change_drive}" = "yes" ]; then
+			# === boot.ini from SDcard, prepare for boot from mmc 1:1 ===
+			# for kernel/initrd/dtb loading
+			cat /mnt1/boot.ini | sed "s/0:1/1:1/g" > _bini_
+			cp _bini_ /mnt1/boot.ini
+			rm _bini_
+			# for boot.ini loading from /multiboot (it was changed with previous sed operation!)
+			cat /mnt1/boot.ini | sed "s/1:1 0x60000000/0:1 0x60000000/g" > _bini_
+			cp _bini_ /mnt1/boot.ini
+			rm _bini_
+		fi
+
+		if [ "${1}" = "boot.ini.android" ]; then
+			# === mount android system partition to prepare android fstab ===
+			mkdir /mnt_a > /dev/null 2>&1
+			if [ "${change_drive}" = "yes" ]; then
+				if [ "${BOOT_FROM}" = "/dev/mmcblk0" ]; then
+					mount -t ext4 /dev/mmcblk1p2 /mnt_a > /dev/null 2>&1
+				else
+					mount -t ext4 /dev/mmcblk0p2 /mnt_a > /dev/null 2>&1
+				fi
+			else
+				if [ "${BOOT_FROM}" = "/dev/mmcblk0" ]; then
+					mount -t ext4 /dev/mmcblk0p2 /mnt_a > /dev/null 2>&1
+				else
+					mount -t ext4 /dev/mmcblk1p2 /mnt_a > /dev/null 2>&1
+				fi
+			fi
+			if [ $? -ne 0 ]; then
+				printf "\033[31m\033[1m Mount Android system partition ERROR\033[22m\033[37m"
+				cp /mnt1/${_ini_prefix}/boot.ini.multi /mnt1/boot.ini > /dev/null 2>&1
+				[ "${O_BOARD}" = "XU" ] && cp /mnt1/${_ini_prefix}/boot.scr.multi /mnt1/boot.scr > /dev/null 2>&1
+				sleep 3
+				umount /mnt_a > /dev/null 2>&1
+				return 1
+			fi
+
+			# === Configure Android fstab to mount the right partitions ===
+			if [ -f /mnt_a/${ODROID_FSTAB} ]; then
+				if [ "${change_drive}" = "yes" ]; then
+					cat /mnt_a/${ODROID_FSTAB} | sed "s/\/dev\/block\/mmcblk0/\/dev\/block\/mmcblk1/g" > _fstab_
+				else
+					cat /mnt_a/${ODROID_FSTAB} | sed "s/\/dev\/block\/mmcblk1/\/dev\/block\/mmcblk0/g" > _fstab_
+				fi
+				cp _fstab_ /mnt_a/${ODROID_FSTAB}
+				rm _fstab_
+			else
+				printf "\033[31m\033[1m %s not found\033[22m\033[37m" "${ODROID_FSTAB}"
+				cp /mnt1/${_ini_prefix}/boot.ini.multi /mnt1/boot.ini > /dev/null 2>&1
+				[ "${O_BOARD}" = "XU" ] && cp /mnt1/${_ini_prefix}/boot.scr.multi /mnt1/boot.scr > /dev/null 2>&1
+				sleep 3
+				umount /mnt_a > /dev/null 2>&1
+				return 1
+			fi
+			if [ -f /mnt_a/${ODROID_FSTAB}.sdcard ]; then
+				if [ "${change_drive}" = "yes" ]; then
+					cat /mnt_a/${ODROID_FSTAB}.sdcard | sed "s/\/dev\/block\/mmcblk0/\/dev\/block\/mmcblk1/g" > _fstab_
+				else
+					cat /mnt_a/${ODROID_FSTAB}.sdcard | sed "s/\/dev\/block\/mmcblk1/\/dev\/block\/mmcblk0/g" > _fstab_
+				fi
+				cp _fstab_ /mnt_a/${ODROID_FSTAB}.sdcard
+				rm _fstab_
+			fi
+			if [ -f /mnt_a/${ODROID_FSTAB}.sdboot ]; then
+				if [ "${change_drive}" = "yes" ]; then
+					cat /mnt_a/${ODROID_FSTAB}.sdboot | sed "s/\/dev\/block\/mmcblk0/\/dev\/block\/mmcblk1/g" > _fstab_
+				else
+					cat /mnt_a/${ODROID_FSTAB}.sdboot | sed "s/\/dev\/block\/mmcblk1/\/dev\/block\/mmcblk0/g" > _fstab_
+				fi
+				cp _fstab_ /mnt_a/${ODROID_FSTAB}.sdboot
+				rm _fstab_
+			fi
+
+			if [ "${change_drive}" = "yes" ]; then
+				# prepare boot.ini for boot from sdcard
+				cat /mnt1/boot.ini | sed "s/root=\/dev\/mmcblk0p2/root=\/dev\/mmcblk1p2/g" > _bini_
+				cp _bini_ /mnt1/boot.ini
+				rm _bini_
+			fi
+			umount /mnt_a > /dev/null 2>&1
+		fi
+
+		if [ "${O_BOARD}" = "XU" ]; then
+			mkimage -C none -A arm -T script -d /mnt1/boot.ini /mnt1/boot.scr > /dev/null 2>&1
+			if [ $? -ne 0 ]; then
+				printf "\033[31m\033[1m mkimage (boot.scr) ERROR\033[22m\033[37m"
+				cp /mnt1/${_ini_prefix}/boot.ini.multi /mnt1/boot.ini > /dev/null 2>&1
+				cp /mnt1/${_ini_prefix}/boot.scr.multi /mnt1/boot.scr > /dev/null 2>&1
+				sleep 3
+				umount /mnt_a > /dev/null 2>&1
+				return 1
+			fi
+		fi
+		sleep 1
+		umount /mnt1
+		umount /mnt2 > /dev/null 2>&1
+		reboot
+	fi
+}
+#----------------------------------------------------------------------------------------------------------------------
+
+#------------------------------------------------------
+set_menu_key() {
+	_menu_key="\\$(printf '%03o' ${_menu_no})"
+
+	if [ $_menu_no -eq 49 ]; then
+		_menuitem_1="${1}"
+		_mndscr_1="${_desc}"
+		[ "${_actmount}" = "mnt2" ] && _mncrd_1="2"
+	elif [ $_menu_no -eq 50 ]; then
+		_menuitem_2="${1}"
+		_mndscr_2="${_desc}"
+		[ "${_actmount}" = "mnt2" ] && _mncrd_2="2"
+	elif [ $_menu_no -eq 51 ]; then
+		_menuitem_3="${1}"
+		_mndscr_3="${_desc}"
+		[ "${_actmount}" = "mnt2" ] && _mncrd_3="2"
+	elif [ $_menu_no -eq 52 ]; then
+		_menuitem_4="${1}"
+		_mndscr_4="${_desc}"
+		[ "${_actmount}" = "mnt2" ] && _mncrd_4="2"
+	elif [ $_menu_no -eq 53 ]; then
+		_menuitem_5="${1}"
+		_mndscr_5="${_desc}"
+		[ "${_actmount}" = "mnt2" ] && _mncrd_5="2"
+	elif [ $_menu_no -eq 54 ]; then
+		_menuitem_6="${1}"
+		_mndscr_6="${_desc}"
+		[ "${_actmount}" = "mnt2" ] && _mncrd_6="2"
+	elif [ $_menu_no -eq 55 ]; then
+		_menuitem_7="${1}"
+		_mndscr_7="${_desc}"
+		[ "${_actmount}" = "mnt2" ] && _mncrd_7="2"
+	elif [ $_menu_no -eq 56 ]; then
+		_menuitem_8="${1}"
+		_mndscr_8="${_desc}"
+		[ "${_actmount}" = "mnt2" ] && _mncrd_8="2"
+	fi
+
+	let _menu_no=_menu_no+1
+	let _numos=_numos+1
+}
+#------------------------------------------------------
+
+#---------------------------------------------------------------------------------------------
+# shellcheck disable=SC2059
+get_menu_items() {
+	local _oncard=""
+	if [ "${_numcards}" = "2" ]; then
+		if [ "${O_BOARD}" = "C2" ]; then
+			if [ "${_actmount}" = "mnt1" ]; then
+				_oncard=" on EMMC"
+			else
+				_oncard=" on SDcard"
+			fi
+		else
+			if [ "${_actmount}" = "mnt1" ] && [ "${BOOT_FROM}" = "/dev/mmcblk1" ]; then
+				_oncard=" on SDcard"
+			else
+				_oncard=" on EMMC"
+			fi
+		fi
+	fi
+	if [ -f /${_actmount}/${_ini_prefix}/boot.ini.android ]; then
+		get_descr "boot.ini.android" "Android"
+		set_menu_key "boot.ini.android"
+		printf "\033[36m    \033[32m\033[1m${_menu_key}\033[22m\033[36m  boot to \033[32m${_desc}\033[36m${_oncard}\n"
+	fi
+	if [ -f /${_actmount}/${_ini_prefix}/boot.ini.linux ]; then
+		get_descr "boot.ini.linux" "Linux"
+		set_menu_key "boot.ini.linux"
+		printf "\033[36m    \033[33m\033[1m${_menu_key}\033[22m\033[36m  boot to \033[33m${_desc}\033[36m${_oncard}\n"
+	fi
+	if [ -f /${_actmount}/${_ini_prefix}/boot.ini.oelec ]; then
+		get_descr "boot.ini.oelec" "OpenElec"
+		set_menu_key "boot.ini.oelec"
+		printf "\033[36m    \033[37m\033[1m${_menu_key}\033[22m\033[36m  boot to \033[37m${_desc}\033[36m${_oncard}\n"
+	fi
+	if [ -f /${_actmount}/${_ini_prefix}/boot.ini.linux2 ]; then
+		get_descr "boot.ini.linux2" "Linux #2"
+		set_menu_key "boot.ini.linux2"
+		printf "\033[36m    \033[33m\033[1m${_menu_key}\033[22m\033[36m  boot to \033[33m${_desc}\033[36m${_oncard}\n"
+	fi
+}
+#---------------------------------------------------------------------------------------------
+
+#-----------------------------------------------------------------------------------------------------
+do_halt() {
+	umount /mnt1 > /dev/null 2>&1
+	umount /mnt2 > /dev/null 2>&1
+	local B="X"
+	local _reboot_delay=60
+	while [ $_reboot_delay -gt 0 ]; do
+		printf "\r\033[2K"
+		printf "    \033[31m\033[1m%s, press R to reboot %s\033[22m\033[37m\r" "${1}" "$_reboot_delay"
+		if read -n 1 -t 1 -s B; then
+			_reboot_delay=60
+			if [ "${B}" = "r" ] || [ "${B}" = "R" ]; then
+				printf "\r\033[2K"
+				reboot
+			fi
+		else
+			let _reboot_delay=_reboot_delay-1
+		fi
+	done
+	reboot
+}
+#-----------------------------------------------------------------------------------------------------
+
+#-----------------------------------------------------------------------------------------------------------------
+os_detect() {
+	_desc=""
+	_ini_prefix="multiboot"
+	_actmount="mnt1"
+	_numos=0
+	_menu_no=49
+	_menu_key="1"
+	_menuitem_1=""
+	_menuitem_2=""
+	_menuitem_3=""
+	_menuitem_4=""
+	_menuitem_5=""
+	_menuitem_6=""
+	_menuitem_7=""
+	_menuitem_8=""
+	_mndscr_1=""
+	_mndscr_2=""
+	_mndscr_3=""
+	_mndscr_4=""
+	_mndscr_5=""
+	_mndscr_6=""
+	_mndscr_7=""
+	_mndscr_8=""
+	_mncrd_1="1"
+	_mncrd_2="1"
+	_mncrd_3="1"
+	_mncrd_4="1"
+	_mncrd_5="1"
+	_mncrd_6="1"
+	_mncrd_7="1"
+	_mncrd_8="1"
+	_boot_delay=2
+	_numcards="1"
+	_defboot="none"
+	_defdescr="none"
+	_defcard="1"
+
+	# prepare cards mount points
+	mkdir /mnt1 > /dev/null 2>&1
+	mkdir /mnt2 > /dev/null 2>&1
+	umount /mnt1 > /dev/null 2>&1
+	umount /mnt2 > /dev/null 2>&1
+	umount /mnt > /dev/null 2>&1
+
+	clear
+	blkid  > /dev/null 2>&1
+
+	printf "\n\n    Detecting cards...\n"
+
+	# === Detect mmc cards ===
+	_numcards="0"
+	BOOT_FROM="none"
+	# ================================
+	# Find boot card, mount both cards
+	# ================================
+	mount -t vfat /dev/mmcblk0p1 /mnt1 > /dev/null 2>&1
+	if [ $? -eq 0 ]; then
+		_numcards="1"
+		if [ -f /mnt1/_BOOT_FROM_ ]; then
+			# BOOT DRIVE IS mmcblk0
+			BOOT_FROM="/dev/mmcblk0"
+			rm -f /mnt1/_BOOT_FROM_ > /dev/null 2>&1
+		fi
+		# === Check if the 2nd card is present ===
+		if [ -b /dev/mmcblk1p1 ]; then
+			mount -t vfat /dev/mmcblk1p1 /mnt2 > /dev/null 2>&1
+			if [ $? -eq 0 ]; then
+				_numcards="2"
+				if [ "${O_BOARD}" = "XU" ]; then
+					# On XU3/XU4 the boot card can be SDcard or EMMC
+					if [ -f /mnt2/_BOOT_FROM_ ]; then
+						# === BOOT FROM SDcard ===
+						rm -f /mnt2/_BOOT_FROM_ > /dev/null 2>&1
+						if [ "${BOOT_FROM}" = "none" ]; then
+							# === remount boot drive to /mnt1 ===
+							umount /mnt1 > /dev/null 2>&1
+							umount /mnt2 > /dev/null 2>&1
+							sleep 1
+							mount -t vfat /dev/mmcblk1p1 /mnt1 > /dev/null 2>&1
+							mount -t vfat /dev/mmcblk0p1 /mnt2 > /dev/null 2>&1
+							BOOT_FROM="/dev/mmcblk1"
+						fi
+					fi
+				else
+					rm -f /mnt2/_BOOT_FROM_ > /dev/null 2>&1
+					BOOT_FROM="/dev/mmcblk0"
+				fi
+			fi
+		else
+			BOOT_FROM="/dev/mmcblk0"
+		fi
+	else
+		# === SOMETHING IS VERY WRONG ===
+		do_halt "BOOT CARD NOT MOUNTABLE"
+	fi
+
+	if [ "${O_BOARD}" = "XU" ]; then
+		[ -b /dev/mmcblk0boot0 ] && BOOT_CARDTYPE="EMMC"
+	fi
+
+	if [ "${BOOT_FROM}" = "none" ]; then
+		printf "\033[31m\033[1m    WARNING:\033[36m\n"
+		printf "    ==========================================================\n"
+		printf "    = Two cards detected, the boot card cannot be determined =\n"
+		printf "    = You have probably booted from original Odroid card     =\n"
+		printf "    ==========================================================\n\n"
+		printf "    Have you booted from SD Card ? (y/N) "
+		BOOT_FROM="/dev/mmcblk0"
+		B="X"
+		_delay=60
+		while [ $_reboot_delay -gt 0 ]; do
+			if read -n 1 -t 1 -s B; then
+				_delay=60
+				if [ "${B}" = "y" ] || [ "${B}" = "Y" ]; then
+					BOOT_FROM="/dev/mmcblk1"
+					break
+				fi
+			else
+				let _delay=_delay-1
+			fi
+		done
+	fi
+
+	clear
+	printf "\n"
+	printf "\033[36m\033[1m\n"
+	if [ "${O_BOARD}" = "C2" ]; then
+		printf "    ============================\n"
+		printf "    = ODROID C2 BOOT MENU %s =\n" "${SCRIPT_VERSION}"
+		printf "    ============================\n"
+	else
+		printf "    =================================\n"
+		printf "    = ODROID XU3/XU4 BOOT MENU %s =\n" "${SCRIPT_VERSION}"
+		printf "    =================================\n"
+	fi
+	printf "\033[22m\033[37m\n"
+
+	#===================================================
+	# === Detect available OS's and print menu items ===
+	#===================================================
+	_menu_no=49
+	# Scan boot card first
+	_actmount="mnt1"
+	if [ -b /dev/disk/by-label/sduserdata ] || [ -b /dev/disk/by-label/emuserdata ]; then
+		get_menu_items
+		if [ "${_numcards}" = "2" ]; then
+			_actmount="mnt2"
+			[ ! ${_numos} -eq 0 ] && printf "\n"
+			get_menu_items
+		fi
+		[ ${_numos} -eq 0 ] && printf "\033[36m    \033[36m\033[1m!\033[22m  NO OS DETECTED\033[36m\n"
+	else
+		[ ${_numos} -eq 0 ] && printf "\033[36m    \033[36m\033[1m!\033[22m  NO MULTIBOOT CARD DETECTED\033[36m\n"
+	fi
+
+	printf "\n"
+	printf "    \033[36m\033[1mB\033[22m  Backup Android/Linux/OpenElec\033[36m\n"
+	printf "    \033[36m\033[1mU\033[22m  Update Android\033[36m\n"
+	printf "    \033[33m\033[1mI\033[22m  Prepare the card for MultiBoot, Install OS's\033[36m\n"
+	printf "\n"
+	printf "    \033[36m\033[1mX\033[22m  Exit to busybox shell\033[36m\n"
+	printf "    \033[33m\033[1mR\033[22m  Reboot\033[36m\n"
+
+	printf "\n"
+	printf "\n"
+
+	# === Get default boot ===
+
+	if [ "${DEFAULTBOOT}" = "1" ] && [ ! "${_menuitem_1}" = "none" ]; then
+		_defboot="${_menuitem_1}"
+		_defdescr="${_mndscr_1}"
+		_defcard="${_mncrd_1}"
+	elif [ "${DEFAULTBOOT}" = "2" ] && [ ! "${_menuitem_2}" = "none" ]; then
+		_defboot="${_menuitem_2}"
+		_defdescr="${_mndscr_2}"
+		_defcard="${_mncrd_2}"
+	elif [ "${DEFAULTBOOT}" = "3" ] && [ ! "${_menuitem_3}" = "none" ]; then
+		_defboot="${_menuitem_3}"
+		_defdescr="${_mndscr_3}"
+		_defcard="${_mncrd_3}"
+	elif [ "${DEFAULTBOOT}" = "4" ] && [ ! "${_menuitem_4}" = "none" ]; then
+		_defboot="${_menuitem_4}"
+		_defdescr="${_mndscr_4}"
+		_defcard="${_mncrd_4}"
+	elif [ "${DEFAULTBOOT}" = "5" ] && [ ! "${_menuitem_5}" = "none" ]; then
+		_defboot="${_menuitem_5}"
+		_defdescr="${_mndscr_5}"
+		_defcard="${_mncrd_5}"
+	elif [ "${DEFAULTBOOT}" = "6" ] && [ ! "${_menuitem_6}" = "none" ]; then
+		_defboot="${_menuitem_6}"
+		_defdescr="${_mndscr_6}"
+		_defcard="${_mncrd_6}"
+	elif [ "${DEFAULTBOOT}" = "7" ] && [ ! "${_menuitem_7}" = "none" ]; then
+		_defboot="${_menuitem_7}"
+		_defdescr="${_mndscr_7}"
+		_defcard="${_mncrd_7}"
+	elif [ "${DEFAULTBOOT}" = "8" ] && [ ! "${_menuitem_8}" = "none" ]; then
+		_defboot="${_menuitem_8}"
+		_defdescr="${_mndscr_8}"
+		_defcard="${_mncrd_8}"
+	fi
+
+	if [ "${_defboot}" = "none" ]; then
+		if [ ! "${_menuitem_1}" = "none" ]; then
+			_defboot="${_menuitem_1}"
+			_defdescr="${_mndscr_1}"
+			_defcard="${_mncrd_1}"
+			DEFAULTBOOT="1"
+		elif [ ! "${_menuitem_2}" = "none" ]; then
+			_defboot="${_menuitem_2}"
+			_defdescr="${_mndscr_2}"
+			_defcard="${_mncrd_2}"
+			DEFAULTBOOT="2"
+		elif [ ! "${_menuitem_3}" = "none" ]; then
+			_defboot="${_menuitem_3}"
+			_defdescr="${_mndscr_3}"
+			_defcard="${_mncrd_3}"
+			DEFAULTBOOT="3"
+		elif [ ! "${_menuitem_4}" = "none" ]; then
+			_defboot="${_menuitem_4}"
+			_defdescr="${_mndscr_4}"
+			_defcard="${_mncrd_4}"
+			DEFAULTBOOT="4"
+		elif [ ! "${_menuitem_5}" = "none" ]; then
+			_defboot="${_menuitem_5}"
+			_defdescr="${_mndscr_5}"
+			_defcard="${_mncrd_5}"
+			DEFAULTBOOT="5"
+		elif [ ! "${_menuitem_6}" = "none" ]; then
+			_defboot="${_menuitem_6}"
+			_defdescr="${_mndscr_6}"
+			_defcard="${_mncrd_6}"
+			DEFAULTBOOT="6"
+		elif [ ! "${_menuitem_7}" = "none" ]; then
+			_defboot="${_menuitem_7}"
+			_defdescr="${_mndscr_7}"
+			_defcard="${_mncrd_7}"
+			DEFAULTBOOT="7"
+		elif [ ! "${_menuitem_8}" = "none" ]; then
+			_defboot="${_menuitem_8}"
+			_defdescr="${_mndscr_8}"
+			_defcard="${_mncrd_8}"
+			DEFAULTBOOT="8"
+		fi
+	fi
+}
+#-----------------------------------------------------------------------------------------------------------------
+
+os_detect
+
+# ======================================
+# ===      Main loop, never exit     ===
+# === Wait for user OS/action select ===
+# ======================================
+_boot_delay=$BOOTDELAY
+
+# === Detect available Operating Systems ===
+while true; do
+	printf "\r\033[2K"
+    printf "\033[37m    Select an option or boot to menu item \033[36m\033[1m%s\033[22m in\033[31m\033[1m %s \033[22m\033[37mseconds" "${DEFAULTBOOT}" "${_boot_delay}"
+
+	A="Z"
+    if read -n 1 -t 1 -s A; then
+		_boot_delay=$BOOTDELAY
+		if [ "${A}" = "B" ]; then
+			# === BACKUP ===
+			if [ -f /backup.script ]; then
+				umount /mnt1  > /dev/null 2>&1
+				umount /mnt2  > /dev/null 2>&1
+				sleep 1
+				# =========================
+				# Execute the backup script
+				/backup.script
+				# =========================
+				A="Z"
+				os_detect
+				_boot_delay=$BOOTDELAY
+			else
+				printf "\r\033[2K"
+				printf "    BACKUP SCRIPT NOT FOUND!"
+				sleep 4
+			fi
+		elif [ "${A}" = "I" ]; then
+			# === UNIVERSAL INSTALLER ===
+			if [ -f /install.script ]; then
+				umount /mnt1  > /dev/null 2>&1
+				umount /mnt2  > /dev/null 2>&1
+				sleep 1
+				# ============================
+				# Execute the installer script
+				/install.script
+				# ============================
+				A="Z"
+				os_detect
+				_boot_delay=$BOOTDELAY
+			else
+				printf "\r\033[2K"
+				printf "    INSTALL SCRIPT NOT FOUND!"
+				sleep 4
+			fi
+		elif [ "${A}" = "U" ]; then
+			# === ANDROID UPGRADE ====
+			printf "\r\033[2K"
+			printf "    NOT SUPPORTED"
+			sleep 4
+		elif [ "${A}" = "X" ]; then
+			# === ENTER BUSYBOX ===
+			clear
+			printf "\n\n\n    Entering \033[32mBusybox\033[37m shell\n"
+			printf "    Execute \033[32mexit\033[37m to return to menu\n\n"
+			umount /mnt1  > /dev/null 2>&1
+			umount /mnt2  > /dev/null 2>&1
+			sleep 1
+			#For C2 show cursor
+			[ "${O_BOARD}" = "C2" ] && tput cnorm
+			#===============
+			break="bbox"
+			maybe_break bbox
+			#===============
+			printf "\n    \033[32mBusybox exited\033[37m\n"
+			sleep 2
+			#For C2 hide cursor
+			[ "${O_BOARD}" = "C2" ] && tput civis
+			A="Z"
+			os_detect
+			_boot_delay=$BOOTDELAY
+		elif [ "${A}" = "R" ]; then
+			# REBOOT ===
+			_reboot_delay=10
+			B="X"
+			while [ $_reboot_delay -gt 0 ]; do
+				printf "\r\033[2K"
+				printf "    \033[33m\033[1mREBOOT in %s sec, press \033[22ma\033[1m to abort \033[22m\033[37m\r" "$_reboot_delay"
+				if read -n 1 -t 1 -s B; then
+					_reboot_delay=10
+					if [ "${B}" = "a" ] || [ "${B}" = "A" ]; then
+						printf "\r\033[2K"
+						break
+					fi
+				else
+					let _reboot_delay=_reboot_delay-1
+				fi
+			done
+			if [ $_reboot_delay -eq 0 ]; then
+				umount /mnt1 > /dev/null 2>&1
+				umount /mnt2 > /dev/null 2>&1
+				reboot
+			fi
+		elif [ ! "${BOOT_FROM}" = "none" ]; then
+			# === BOOT to selected OS
+			boot_fail="no"
+			[ "${A}" = "1" ] && [ ! "${_menuitem_1}" = "none" ] && do_boot "${_menuitem_1}" "${_mndscr_1}" "${_mncrd_1}"
+			[ "${A}" = "2" ] && [ ! "${_menuitem_2}" = "none" ] && do_boot "${_menuitem_2}" "${_mndscr_2}" "${_mncrd_2}"
+			[ "${A}" = "3" ] && [ ! "${_menuitem_3}" = "none" ] && do_boot "${_menuitem_3}" "${_mndscr_3}" "${_mncrd_3}"
+			[ "${A}" = "4" ] && [ ! "${_menuitem_4}" = "none" ] && do_boot "${_menuitem_4}" "${_mndscr_4}" "${_mncrd_4}"
+			[ "${A}" = "5" ] && [ ! "${_menuitem_5}" = "none" ] && do_boot "${_menuitem_5}" "${_mndscr_5}" "${_mncrd_5}"
+			[ "${A}" = "6" ] && [ ! "${_menuitem_6}" = "none" ] && do_boot "${_menuitem_6}" "${_mndscr_6}" "${_mncrd_6}"
+			[ "${A}" = "7" ] && [ ! "${_menuitem_7}" = "none" ] && do_boot "${_menuitem_7}" "${_mndscr_7}" "${_mncrd_7}"
+			[ "${A}" = "8" ] && [ ! "${_menuitem_8}" = "none" ] && do_boot "${_menuitem_8}" "${_mndscr_8}" "${_mncrd_8}"
+
+			if [ "${boot_fail}" = "yes" ]; then
+				# === BOOT ERROR ===
+				sleep 4
+				os_detect
+				_boot_delay=$BOOTDELAY
+			fi
+		fi
+    else
+        let _boot_delay=_boot_delay-1
+		if [ $_boot_delay -eq 0 ]; then
+			# Default boot
+			[ $_numos -gt 0 ] && [ ! "${_defboot}" = "none" ] && do_boot "${_defboot}" "${_defdescr}" "${_defcard}"
+
+			# === BOOT ERROR ===
+			sleep 4
+			os_detect
+			_boot_delay=$BOOTDELAY
+		fi
+    fi
+
+    printf "\r"
+done
+
+# Just in case...
+printf "\n\n"
+umount /mnt1 > /dev/null 2>&1
+umount /mnt2 > /dev/null 2>&1
+printf "\033[36m    REBOOT ...\n"
+
+reboot
+#---------------------------------------------------------------------------
