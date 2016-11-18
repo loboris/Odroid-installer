@@ -1,0 +1,2 @@
+/scripts/local-bottom/ntfs_3g "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf

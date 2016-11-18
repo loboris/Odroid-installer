@@ -1,0 +1,182 @@
+ODROIDC2-UBOOT-CONFIG
+
+# boot.ini identification, Essential. Do not change first line shown above.
+
+
+# **Important Note** 
+#   Selecting various resolutions has no effect with LibreELEC / Kodi as it uses EDID
+#   handshaking negotiation with a connected display to show available resolutions after Kodi startup.
+
+# Possible bootscreen screen resolutions - supported by the Kernel drivers, listed for reference purposes.
+
+
+# 480 Lines (720x480)
+# setenv m "480i60hz" # Interlaced 60Hz
+# setenv m "480i_rpt" # Interlaced for Rear Projection Televisions 60Hz
+# setenv m "480p60hz" # 480 Progressive 60Hz
+# setenv m "480p_rpt" # 480 Progressive for Rear Projection Televisions 60Hz
+
+# 576 Lines (720x576)
+# setenv m "576i50hz" # Interlaced 50Hz
+# setenv m "576i_rpt" # Interlaced for Rear Projection Televisions 50Hz
+# setenv m "576p50hz" # Progressive 50Hz
+# setenv m "576p_rpt" # Progressive for Rear Projection Televisions 50Hz
+
+# 720 Lines (1280x720)
+# setenv m "720p50hz" # 50Hz
+# setenv m "720p60hz" # 60Hz
+
+# 1080 Lines (1920x1080)
+# setenv m "1080i60hz" # Interlaced 60Hz
+setenv m "1080p60hz" # Progressive 60Hz
+# setenv m "1080i50hz" # Interlaced 50Hz
+# setenv m "1080p50hz" # Progressive 50Hz
+# setenv m "1080p24hz" # Progressive 24Hz
+
+# 4K (3840x2160)
+# setenv m "2160p30hz"    # Progressive 30Hz
+# setenv m "2160p25hz"    # Progressive 25Hz
+# setenv m "2160p24hz"    # Progressive 24Hz
+# setenv m "smpte24hz"    # Progressive 24Hz SMPTE
+# setenv m "2160p50hz"    # Progressive 50Hz
+# setenv m "2160p60hz"    # Progressive 60Hz
+# setenv m "2160p50hz420" # Progressive 50Hz with YCbCr 4:2:0 (Requires TV/Monitor that supports it)
+# setenv m "2160p60hz420" # Progressive 60Hz with YCbCr 4:2:0 (Requires TV/Monitor that supports it)
+
+### VESA modes ###
+# setenv m "640x480p60hz"
+# setenv m "800x480p60hz"
+# setenv m "800x600p60hz"
+# setenv m "1024x600p60hz"
+# setenv m "1024x768p60hz"  
+# setenv m "1280x800p60hz"
+# setenv m "1280x1024p60hz"
+# setenv m "1360x768p60hz"
+# setenv m "1440x900p60hz"
+# setenv m "1600x900p60hz"
+# setenv m "1680x1050p60hz"
+# setenv m "1920x1200p60hz"
+# setenv m "2560x1080p60hz"
+# setenv m "2560x1440p60hz"
+# setenv m "2560x1600p60hz"
+
+
+# HDMI BPP Mode
+setenv m_bpp "32"
+# setenv m_bpp "24"
+# setenv m_bpp "16"
+
+
+# HDMI DVI/VGA modes
+# Uncomment only a single Line! The line with setenv written.
+# At least one mode must be selected.
+setenv vout "hdmi"
+# setenv vout "dvi"
+# setenv vout "vga"
+
+
+# HDMI HotPlug Detection control
+# Allows you to force HDMI thinking that the cable is connected.
+# true = HDMI will believe that cable is always connected
+# false = will let board/monitor negotiate the connection status
+setenv hpd "true"
+# setenv hpd "false"
+
+
+# Default Console Device Setting
+# setenv condev "console=ttyS0,115200n8"                # on serial port
+setenv condev "console=tty0"                          # on display (HDMI)
+# setenv condev "console=tty0 console=ttyS0,115200n8"   # on both
+
+
+# Server Mode (aka. No Graphics)
+# Setting nographics to 0 will disable all video subsystem
+# This mode is ideal of server type usage. (Saves ~300Mb of RAM)
+setenv nographics "1"
+
+
+# Setup the LibreELEC options
+# Valid values are: textmode debugging progress nofsck nosplash noram overlay quiet ssh
+setenv libreelec "quiet ssh"
+
+
+# UHS Card Configuration
+# Uncomment the line below to DISABLE UHS-1 MicroSDHC support
+# This might break bootup for some SDHC cards.
+# setenv disableuhs "disableuhs"
+
+
+# Enable | Disable HDMI CEC Control
+# setenv hdmi_cec  "0"                 # Disabled
+setenv hdmi_cec  "1"                 # Enabled
+# setenv hdmi_cec  "2"                 # Enabled but disable auto TV switching ON 
+
+
+# CPU Frequency / Cores control
+#
+# WARNING!!! WARNING!!! WARNING!!!
+#   Before changing anything here please read the wiki entry:
+#   http://odroid.com/dokuwiki/doku.php?id=en:c2_set_cpu_freq
+#
+# MAX CPU's
+#  setenv maxcpus "1"
+#  setenv maxcpus "2"
+#  setenv maxcpus "3"
+  setenv maxcpus "4"
+#
+# MAX Frequency
+#  setenv max_freq "2016"  # 2.016GHz
+#  setenv max_freq "1944"  # 1.944GHz
+#  setenv max_freq "1944"  # 1.944GHz
+#  setenv max_freq "1920"  # 1.920GHz
+#  setenv max_freq "1896"  # 1.896GHz
+#  setenv max_freq "1752"  # 1.752GHz
+#  setenv max_freq "1680"  # 1.680GHz
+  setenv max_freq "1656"  # 1.656GHz
+#  setenv max_freq "1536"  # 1.536GHz
+
+
+# Force HDMI to use RGB colorspace regardless of TV request
+setenv hdmi_forcergb "0"              # Disabled
+# setenv hdmi_forcergb "1"             # Enabled
+
+
+# Odroid C2 specific
+setenv odroidp1  "no_console_suspend hdmimode=${m} m_bpp=${m_bpp} vout=${vout} disablehpd=${hpd}"
+setenv odroidp2  "${disableuhs} consoleblank=0 max_freq=${max_freq} maxcpus=${maxcpus}"
+setenv odroid "${odroidp1} ${odroidp2}"
+
+
+# U-Boot - populate bootcmd
+setenv kernel  "fatload mmc 0:1 0x11000000 multiboot/KERNEL"
+setenv dtb     "fatload mmc 0:1 0x1000000  multiboot/meson64_odroidc2.dtb.oelec"
+setenv bootseq "booti 0x11000000 - 0x1000000"
+setenv timer   "fdt addr 0x1000000; fdt rm /timer"
+setenv bootcmd "${kernel}; ${dtb}; ${timer}; ${bootseq}"
+
+
+# Set Boot and Disk Partitions
+setenv bootrootfs "boot=LABEL=userdata disk=LABEL=oelec"
+
+
+# Prepare to boot
+if test "${hdmi_cec}" = "0"; then setenv hdmitx "hdmitx=cec0"; fi
+if test "${hdmi_cec}" = "1"; then setenv hdmitx "hdmitx=cecf"; fi
+if test "${hdmi_cec}" = "2"; then setenv hdmitx "hdmitx=cec7"; fi
+
+if test "${hdmi_forcergb}" = "1"; then setenv hdmitx "${hdmitx},forcergb"; fi
+if test "${nographics}" = "0"; then fdt rm /mesonfb; fdt rm /aocec; fi
+
+
+# Populate the final boot variables
+setenv bootargs "${condev} ${bootrootfs} ${odroid} ${hdmitx} ${libreelec}"
+
+# =================================================
+# = RESTORE boot.ini FOR MULTIBOOT, DO NOT CHANGE =
+# =================================================
+fatload mmc 0:1 0x60000000 multiboot/boot.ini.multi
+fatwrite mmc 0:1 0x60000000 boot.ini ${filesize}
+# =================================================
+
+# Boot the C2 board
+run bootcmd

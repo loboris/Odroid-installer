@@ -1,1 +1,147 @@
-/home/LoBo2_Razno/Odroid/Multiboot_install/inst_boot
+#!/bin/bash
+
+if [ "$(id -u)" != "0" ]; then
+   printf "\n\033[31m\033[1mScript must be run as root !\033[22m\033[37m\n\n"
+   exit 1
+fi
+
+usage() {
+	printf "\n\033[33m"
+    printf "USAGE: inst_boot dest board [emmc]\n"
+    printf "       \033[1mdest\033[22m   destination, block device (/dev/sdX) or image name\n"
+    printf "       \033[1mboard\033[22m  Odroid board type: \033[1mc2\033[22m or \033[1mxu4\033[22m\n"
+    printf "       \033[1memmc\033[22m  Prepare EMMC card, only valid for Odroid-C2, default is SD\n"
+	printf "\033[37m\n"
+}
+
+if [ "${1}" = "" ]; then
+    printf "\n\033[31m\033[1mdestination must be specified\033[22m\033[37m\n"
+    usage
+    exit 1
+fi
+if [ ! "${2}" = "xu4" ] && [ ! "${2}" = "c2" ]; then
+    printf "\n\033[31m\033[1mOdroid board type must be \033[33mxu4\033[31m or \033[33mc2\033[31m\033[37m\n"
+    usage
+    exit 1
+fi
+
+sdcard=${1}
+emmc_install=""
+emmc_disp=""
+if [ "${2}" = "c2" ]; then
+	part_start=65536       # RESERVE 32MB AT CARD START
+	o_device="c2"
+	src_dir="C2"
+	if [ "${3}" = "emmc" ] || [ "${3}" = "EMMC" ]; then
+		emmc_install="yes"
+		emmc_disp="(EMMC card)"
+	else
+		emmc_install="no"
+		emmc_disp="(SD card)"
+	fi
+else
+	part_start=131072      # RESERVE 64MB AT CARD START
+	o_device="xu4"
+	src_dir="XU4"
+	if [ -b $sdcard ]; then
+		printf "\n\033[33m\033[1mWARNING:\033[22m Do not use EMMC in SD adapter to prepare the card!\033[37m\n"
+	fi
+fi
+
+
+
+#====================================================================================
+
+echo ""
+printf "\033[36m\033[1m\n"
+echo "========================================"
+echo "= Installing boot files to Odroid card ="
+echo "========================================"
+printf "\033[22m\033[37m\n"
+printf "\033[33mPreparing for \033[1mOdroid-%s %s\033[22m\033[37m\n\n" "${o_device}" "${emmc_disp}"
+
+# =================
+# Check destination
+# =================
+if [ -b $sdcard ]; then
+    # we are working with block device
+    # Test if requested drive is removable
+    ISREMOVABLE=`udevadm info -a -n ${sdcard} | grep -o "ATTR{removable}==\"1\""`
+    if [ ! "${ISREMOVABLE}" = "ATTR{removable}==\"1\"" ] ; then
+	    printf "\033[31m\033[1m%s IS NOT REMOVABLE DRIVE !, Exiting.\033[37m\033[22m\n" "${sdcard}"
+	    exit 1
+    fi
+
+    _sdok=`fdisk -l $sdcard  2> /dev/null | grep Disk`
+    if [ "$_sdok" = "" ]; then
+	    printf "\033[31m\033[1m%s NOT FOUND !, Exiting.\033[37m\033[22m\n" "${sdcard}"
+	    exit 1
+    fi
+else
+    printf "\033[31m\033[1m%s NOT FOUND !, Exiting.\033[37m\033[22m\n" "${sdcard}"
+	exit 1
+fi
+
+printf "\033[31m\033[1mWARNING: Boot section of Odroid card \033[36m%s\033[31m WILL BE REPLACED !\033[22m\033[37m, Continue (y/N)?  " "${sdcard}"
+read -n 1 ANSWER
+
+if [ ! "${ANSWER}" = "y" ] ; then
+	echo "."
+	echo "Canceled.."
+	exit 0
+fi
+
+# ==========================================================
+# Partition and format sd/emmc card if not creating an image
+
+echo ""
+echo "Copying boot section..."
+if [ ${o_device} = "xu4" ]; then
+	dd if=${src_dir}/initramfs/ramfs/multi/bl1.bin of=${sdcard} bs=512 seek=1 > /dev/null 2>&1
+	if [ $? -ne 0 ]; then
+		echo "ERROR installing bl1.bin."
+	fi
+	sync
+	dd if=${src_dir}/initramfs/ramfs/multi/bl2.bin of=${sdcard} bs=512 seek=31 > /dev/null 2>&1
+	if [ $? -ne 0 ]; then
+		echo "ERROR installing bl2.bin."
+	fi
+	sync
+	dd if=${src_dir}/initramfs/ramfs/multi/u-boot.bin of=${sdcard} bs=512 seek=63 > /dev/null 2>&1
+	if [ $? -ne 0 ]; then
+		echo "ERROR installing u-boot.bin."
+	fi
+	sync
+	dd if=${src_dir}/initramfs/ramfs/multi/tzsw.bin of=${sdcard} bs=512 seek=2111 > /dev/null 2>&1
+	if [ $? -ne 0 ]; then
+		echo "ERROR installing tzsw.bin."
+	fi
+	sync
+else
+	dd if=${src_dir}/initramfs/ramfs/multi/bl1.bin of=${sdcard} bs=1 count=442 > /dev/null 2>&1
+	if [ $? -ne 0 ]; then
+		echo "ERROR installing bl1.bin."
+	fi
+	dd if=${src_dir}/initramfs/ramfs/multi/bl1.bin of=${sdcard} bs=512 skip=1 seek=1 > /dev/null 2>&1
+	if [ $? -ne 0 ]; then
+		echo "ERROR installing bl1.bin."
+	fi
+	sync
+	dd if=${src_dir}/initramfs/ramfs/multi/u-boot.bin of=${sdcard} bs=512 seek=97 > /dev/null 2>&1
+	if [ $? -ne 0 ]; then
+		echo "ERROR installing u-boot.bin."
+	fi
+	sync
+	# u-boot env erase
+	dd if=/dev/zero of=${sdcard} seek=1440 count=64 > /dev/null 2>&1
+	if [ $? -ne 0 ]; then
+		echo "ERROR erasing u-boot environment."
+	fi
+	sync
+fi
+
+sync
+
+printf "\n\033[33mOK.\n\033[37m\n"
+
+exit 0

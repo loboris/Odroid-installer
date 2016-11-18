@@ -1,0 +1,2 @@
+/scripts/local-top/c2_init.sh "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf

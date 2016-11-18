@@ -1,0 +1,134 @@
+#DESCRIPTION "Odroid Android"
+ 
+# setenv fb_x_res "640"
+# setenv fb_y_res "480"
+# setenv hdmi_phy_res "480p60hz"
+ 
+# setenv fb_x_res "720"
+# setenv fb_y_res "489"
+# setenv hdmi_phy_res "480p59.45"
+ 
+# setenv fb_x_res "720"
+# setenv fb_y_res "576"
+# setenv hdmi_phy_res "576p50hz"
+ 
+# setenv fb_x_res "800"
+# setenv fb_y_res "480"
+# setenv hdmi_phy_res "800x480p60hz"
+ 
+# setenv fb_x_res "800"
+# setenv fb_y_res "600"
+# setenv hdmi_phy_res "600p60hz"
+ 
+# setenv fb_x_res "1024"
+# setenv fb_y_res "600"
+# setenv hdmi_phy_res "1024x600p43hz"
+ 
+# setenv fb_x_res "1280"
+# setenv fb_y_res "720"
+# setenv hdmi_phy_res "720p50hz"
+ 
+# setenv fb_x_res "1280"
+# setenv fb_y_res "720"
+# setenv hdmi_phy_res "720p60hz"
+ 
+# setenv fb_x_res "1280"
+# setenv fb_y_res "768"
+# setenv hdmi_phy_res "768p60hz"
+ 
+# setenv fb_x_res "1280"
+# setenv fb_y_res "800"
+# setenv hdmi_phy_res "800p59hz"
+ 
+# setenv fb_x_res "1280"
+# setenv fb_y_res "960"
+# setenv hdmi_phy_res "960p60hz"
+ 
+# setenv fb_x_res "1440"
+# setenv fb_y_res "900"
+# setenv hdmi_phy_res "900p60hz"
+ 
+# setenv fb_x_res "1440"
+# setenv fb_y_res "900"
+# setenv hdmi_phy_res "900p60hz"
+ 
+# setenv fb_x_res "1280"
+# setenv fb_y_res "1024"
+# setenv hdmi_phy_res "1024p60hz"
+ 
+# setenv fb_x_res "1920"
+# setenv fb_y_res "1080"
+# setenv hdmi_phy_res "1080i50hz"
+ 
+# setenv fb_x_res "1920"
+# setenv fb_y_res "1080"
+# setenv hdmi_phy_res "1080i60hz"
+ 
+# setenv fb_x_res "1920"
+# setenv fb_y_res "1080"
+# setenv hdmi_phy_res "1080p30hz"
+ 
+# setenv fb_x_res "1920"
+# setenv fb_y_res "1080"
+# setenv hdmi_phy_res "1080p50hz"
+ 
+# setenv fb_x_res "1920"
+# setenv fb_y_res "1080"
+# setenv hdmi_phy_res "1080p60hz"
+ 
+setenv fb_x_res "1920"
+setenv fb_y_res "1080"
+setenv hdmi_phy_res "1080p60hz"
+ 
+setenv edid "0"
+ 
+setenv hpd "1"
+ 
+setenv led_blink "1"
+ 
+setenv bootargs "fb_x_res=${fb_x_res} fb_y_res=${fb_y_res} hdmi_phy_res=${hdmi_phy_res} edid=${edid} hpd=${hpd} led_blink=${led_blink}"
+
+# ========================================================
+# =     !! DO NOT CHANGE ANYTHING BELOW THIS LINE !!     =
+# ========================================================
+# =    RESTORE boot.scr FOR MULTIBOOT, DO NOT CHANGE     =
+# ========================================================
+setenv boot_mmc_type "unknown"
+setenv mmc_boot_device 9
+
+mmc list
+mmc dev
+
+setenv akernel zImage
+setenv change_osdev no
+setenv bootdev "0:1"
+
+if test "${mmc_boot_device}" = "0"; then
+  setenv bootdev "0:1";
+  setenv boot_mmc_type "${boot_mmc0_type}";
+elif test "${mmc_boot_device}" = "1"; then
+  setenv bootdev "1:1";
+  setenv boot_mmc_type "${boot_mmc1_type}";
+fi
+
+setenv os_dev "${bootdev}";
+if test "${change_osdev}" = "yes"; then
+  if test "${bootdev}" = "0:1"; then
+    setenv os_dev "1:1";
+  else
+    setenv os_dev "0:1";
+  fi
+fi
+# ========================================================
+
+echo "**** BOOT FROM: [${bootdev}] [${mmc_boot_device}:${boot_mmc_type}] TO: [${os_dev}] KERNEL: ${akernel} ***"
+
+fatload mmc ${os_dev} 40008000 ${akernel}
+
+# === RESTORE MULTIBOOT SCRIPT ===========================
+fatload mmc ${bootdev} 0x60000000 /multiboot/boot.scr.multi
+fatwrite mmc ${bootdev} 0x60000000 boot.scr ${filesize}
+#=========================================================
+
+# Boot the board
+bootz 40008000"
