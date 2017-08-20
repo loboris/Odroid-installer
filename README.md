@@ -48,7 +48,7 @@ Universal installer which can install **android**, **linux**, **OpenELEC** or an
   - **rename** the Linux installation image to **linux.img** !
   - **rename** the OpenELEC installation tar to **oelec.tar** !
   - **rename** the Android installation archive to **update.tar.gz** or **update.zip** !
-  - on Odroid UX4/XU3 set the **boot switch** to boot from SDCard
+  - on Odroid XU4/XU3 set the **boot switch** to boot from SDCard
   - connect you USB drive to Odroid, insert SDCard and power on
   - select Install from menu
   - follow the instructions to select desired partition sizes and installation destination (**SDCard** or **EMMC**)
